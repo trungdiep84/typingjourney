@@ -1,0 +1,51 @@
+export type ChallengeMode = "timed" | "essay";
+
+export type TypingContent = {
+  id: string;
+  sourceEssayId?: string;
+  title: string;
+  author: string;
+  sourceUrl: string;
+  description: string;
+  text: string;
+};
+
+export type TypingStats = {
+  wpm: number;
+  accuracy: number;
+  errors: number;
+  typedChars: number;
+  elapsedMs: number;
+  completed: boolean;
+};
+
+export type TypedCharacter = {
+  expected: string;
+  actual: string;
+  correct: boolean;
+};
+
+export type MistakeHotspot = {
+  expected: string;
+  actual: string;
+  count: number;
+};
+
+export type TypingSession = {
+  mode: ChallengeMode;
+  text: string;
+  durationMs: number;
+  entries: TypedCharacter[];
+  mistakes: TypedCharacter[];
+  startedAt: number | null;
+  pausedAt: number | null;
+  finishedAt: number | null;
+};
+
+export type CharacterStatus = "correct" | "incorrect" | "current" | "upcoming";
+
+export type DisplayCharacter = {
+  id: string;
+  char: string;
+  status: CharacterStatus;
+};
