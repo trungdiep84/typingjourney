@@ -1,6 +1,5 @@
 import {
   ArrowLeft,
-  BarChart3,
   BookOpenText,
   ChevronDown,
   Clock3,
@@ -11,6 +10,7 @@ import {
   Play,
   RefreshCw,
   Search,
+  TrendingUp,
   Volume2,
   VolumeX
 } from "lucide-react";
@@ -756,6 +756,22 @@ function formatModeLabel(mode: ChallengeMode) {
   return "Essay";
 }
 
+function formatHistoryTrendLabel(results: PracticeResult[]) {
+  if (results.length === 0) {
+    return "Recent WPM trend: no sessions yet.";
+  }
+
+  if (results.length === 1) {
+    return `Recent WPM trend: one session at ${Math.round(
+      results[0].wpm
+    )} WPM.`;
+  }
+
+  return `Recent WPM trend from oldest to newest: ${results
+    .map((result) => `${Math.round(result.wpm)} WPM`)
+    .join(", ")}.`;
+}
+
 function formatHotspotCharacter(char: string) {
   if (char === " ") {
     return "space";
@@ -890,14 +906,6 @@ function getHotspotNote(hotspots: MistakeHotspot[]) {
   return `Watch ${formatHotspotCharacter(hotspot.expected)} when your fingers want ${formatHotspotCharacter(
     hotspot.actual
   )}.`;
-}
-
-function formatHistoryBarHeight(wpm: number, maxWpm: number) {
-  if (maxWpm <= 0 || wpm <= 0) {
-    return "12%";
-  }
-
-  return `${Math.min(100, Math.max(12, (wpm / maxWpm) * 100))}%`;
 }
 
 type ResetSessionOptions = {
@@ -1141,10 +1149,37 @@ export function App() {
     (best, result) => (!best || result.wpm > best.wpm ? result : best),
     null
   );
-  const trendMaxWpm = Math.max(
-    1,
-    ...recentHistory.map((result) => result.wpm)
-  );
+  const historyTrendResults = [...recentHistory].reverse();
+  const historyTrendWpms = historyTrendResults.map((result) => result.wpm);
+  const historyTrendMinWpm =
+    historyTrendWpms.length > 0 ? Math.min(...historyTrendWpms) : 0;
+  const historyTrendMaxWpm =
+    historyTrendWpms.length > 0 ? Math.max(...historyTrendWpms) : 0;
+  const historyTrendRange = historyTrendMaxWpm - historyTrendMinWpm;
+  const historyTrendPoints = historyTrendResults.map((result, index) => {
+    const x =
+      historyTrendResults.length <= 1
+        ? 50
+        : 6 + (index / (historyTrendResults.length - 1)) * 88;
+    const y =
+      historyTrendRange <= 0
+        ? 24
+        : 40 - ((result.wpm - historyTrendMinWpm) / historyTrendRange) * 30;
+
+    return {
+      result,
+      x,
+      y
+    };
+  });
+  const historyTrendLinePoints = historyTrendPoints
+    .map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`)
+    .join(" ");
+  const historyTrendAreaPoints =
+    historyTrendPoints.length > 1
+      ? `6,44 ${historyTrendLinePoints} 94,44`
+      : "";
+  const historyTrendLabel = formatHistoryTrendLabel(historyTrendResults);
 
   const focusInput = useCallback(() => {
     inputRef.current?.focus({ preventScroll: true });
@@ -2216,7 +2251,7 @@ export function App() {
                 <p className="eyebrow">Progress</p>
                 <h2>Recent sessions</h2>
               </div>
-              <BarChart3 size={22} />
+              <TrendingUp size={22} />
             </div>
 
             {sessionHistory.length > 0 ? (
@@ -2244,21 +2279,61 @@ export function App() {
                   </div>
                 </div>
 
-                <div className="history-bars" aria-label="Recent WPM trend">
-                  {[...recentHistory].reverse().map((result) => (
-                    <span
-                      className="history-bar"
-                      key={result.id}
-                      title={`${Math.round(result.wpm)} WPM, ${Math.round(
-                        result.accuracy
-                      )}% accuracy`}
-                    >
-                      <span
-                        style={{
-                          height: formatHistoryBarHeight(result.wpm, trendMaxWpm)
-                        }}
+                <div
+                  className="history-line-chart"
+                  aria-label={historyTrendLabel}
+                  role="img"
+                >
+                  <svg
+                    aria-hidden="true"
+                    focusable="false"
+                    viewBox="0 0 100 48"
+                    preserveAspectRatio="none"
+                  >
+                    <line
+                      className="history-line-grid"
+                      x1="6"
+                      y1="40"
+                      x2="94"
+                      y2="40"
+                    />
+                    <line
+                      className="history-line-grid"
+                      x1="6"
+                      y1="10"
+                      x2="94"
+                      y2="10"
+                    />
+                    {historyTrendAreaPoints ? (
+                      <polygon
+                        className="history-line-area"
+                        points={historyTrendAreaPoints}
                       />
-                    </span>
+                    ) : null}
+                    {historyTrendLinePoints ? (
+                      <polyline
+                        className="history-line"
+                        points={historyTrendLinePoints}
+                      />
+                    ) : null}
+                  </svg>
+                  {historyTrendPoints.map((point, index) => (
+                    <span
+                      aria-hidden="true"
+                      className={
+                        index === historyTrendPoints.length - 1
+                          ? "history-line-dot history-line-dot-current"
+                          : "history-line-dot"
+                      }
+                      key={point.result.id}
+                      style={{
+                        left: `${point.x}%`,
+                        top: `${(point.y / 48) * 100}%`
+                      }}
+                      title={`${Math.round(
+                        point.result.wpm
+                      )} WPM, ${Math.round(point.result.accuracy)}% accuracy`}
+                    />
                   ))}
                 </div>
 
