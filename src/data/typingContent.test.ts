@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createCustomContent,
   essayContents,
   getRandomTimedContent
 } from "./typingContent";
@@ -142,5 +143,21 @@ describe("typing content", () => {
     const next = getRandomTimedContent(ONE_MINUTE_MS, current.sourceEssayId);
 
     expect(next.sourceEssayId).not.toBe(current.sourceEssayId);
+  });
+
+  it("normalizes custom typing content with a stable id", () => {
+    const content = createCustomContent("  hello   custom\ntext\n\nagain  ");
+    const sameContent = createCustomContent("hello custom text\n\nagain");
+
+    expect(content).toEqual(
+      expect.objectContaining({
+        author: "You",
+        description: "24 characters",
+        id: sameContent.id,
+        text: "hello custom text\n\nagain",
+        title: "Custom: hello custom text"
+      })
+    );
+    expect(content.sourceUrl).toBeUndefined();
   });
 });

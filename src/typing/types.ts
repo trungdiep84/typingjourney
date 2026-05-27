@@ -1,11 +1,11 @@
-export type ChallengeMode = "timed" | "essay";
+export type ChallengeMode = "timed" | "essay" | "custom";
 
 export type TypingContent = {
   id: string;
   sourceEssayId?: string;
   title: string;
   author: string;
-  sourceUrl: string;
+  sourceUrl?: string;
   description: string;
   text: string;
 };

@@ -81,7 +81,7 @@ export function typeCharacter(
         ];
 
   const finishedAt =
-    session.mode === "essay" &&
+    session.mode !== "timed" &&
     entries.length >= session.text.length &&
     entries.every((entry) => entry.correct)
       ? nowMs
@@ -116,7 +116,7 @@ export function pauseSession(
   nowMs: number
 ): TypingSession {
   if (
-    session.mode !== "essay" ||
+    session.mode === "timed" ||
     session.startedAt === null ||
     session.pausedAt !== null ||
     session.finishedAt !== null

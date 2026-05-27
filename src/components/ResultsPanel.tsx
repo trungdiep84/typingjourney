@@ -1,4 +1,4 @@
-import { ArrowLeft, RotateCcw, Target, Trophy } from "lucide-react";
+import { ArrowLeft, RotateCcw, Sparkles, Target, Trophy } from "lucide-react";
 import type {
   ChallengeMode,
   MistakeHotspot,
@@ -9,8 +9,12 @@ type ResultsPanelProps = {
   mode: ChallengeMode;
   stats: TypingStats;
   hotspots: MistakeHotspot[];
+  totalMisses: number;
   title: string;
   durationLabel: string;
+  resultBadge: string;
+  resultComparison: string;
+  coachingNotes: string[];
   onChooseAnother: () => void;
   onRetry: () => void;
 };
@@ -35,8 +39,12 @@ export function ResultsPanel({
   mode,
   stats,
   hotspots,
+  totalMisses,
   title,
   durationLabel,
+  resultBadge,
+  resultComparison,
+  coachingNotes,
   onChooseAnother,
   onRetry
 }: ResultsPanelProps) {
@@ -47,10 +55,15 @@ export function ResultsPanel({
           <Trophy size={28} />
         </div>
         <p className="results-kicker">
-          {mode === "timed" ? "Time complete" : "Essay complete"}
+          {mode === "timed"
+            ? "Time complete"
+            : mode === "custom"
+              ? "Custom complete"
+              : "Essay complete"}
         </p>
         <h2>{Math.round(stats.wpm)} WPM</h2>
         <p>{title}</p>
+        <span className="result-badge">{resultBadge}</span>
       </div>
 
       <div className="results-grid" aria-label="Typing summary">
@@ -67,10 +80,26 @@ export function ResultsPanel({
           <small>characters</small>
         </div>
         <div className="result-stat">
-          <span>{hotspots.reduce((total, hotspot) => total + hotspot.count, 0)}</span>
+          <span>{totalMisses}</span>
           <small>misses</small>
         </div>
       </div>
+
+      <section className="coach-panel" aria-label="Result coaching">
+        <div className="hotspots-heading">
+          <Sparkles size={19} />
+          <div>
+            <p className="results-kicker">Coach notes</p>
+            <h3>{resultComparison}</h3>
+          </div>
+        </div>
+
+        <div className="coach-list">
+          {coachingNotes.map((note) => (
+            <p key={note}>{note}</p>
+          ))}
+        </div>
+      </section>
 
       <section className="hotspots-panel" aria-label="Mistake hotspots">
         <div className="hotspots-heading">

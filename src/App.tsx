@@ -1,8 +1,10 @@
 import {
   ArrowLeft,
+  BarChart3,
   BookOpenText,
   ChevronDown,
   Clock3,
+  ClipboardType,
   FileText,
   Keyboard,
   Pause,
@@ -23,7 +25,12 @@ import type {
   ChangeEvent,
   KeyboardEvent as ReactKeyboardEvent
 } from "react";
-import { essayContents, getRandomTimedContent } from "./data/typingContent";
+import {
+  createCustomContent,
+  essayContents,
+  getRandomTimedContent,
+  normalizeTypingText
+} from "./data/typingContent";
 import { ResultsPanel } from "./components/ResultsPanel";
 import { TypingSurface } from "./components/TypingSurface";
 import { useTypingSounds } from "./hooks/useTypingSounds";
@@ -44,6 +51,7 @@ import {
 } from "./typing/typingEngine";
 import type {
   ChallengeMode,
+  MistakeHotspot,
   TypedCharacter,
   TypingContent,
   TypingSession
@@ -101,10 +109,33 @@ type LastPractice =
       essayId: string;
     };
 
+type EssayJourneyFilter = "all" | "saved" | "unstarted" | "finished";
+
+type EssayJourneyState = Exclude<EssayJourneyFilter, "all">;
+
+type PracticeResult = {
+  id: string;
+  practiceKey: string;
+  mode: ChallengeMode;
+  title: string;
+  completedAt: number;
+  durationMs: number;
+  elapsedMs: number;
+  wpm: number;
+  accuracy: number;
+  errors: number;
+  typedChars: number;
+  essayId?: string;
+  sourceEssayId?: string;
+};
+
 const LAST_PRACTICE_STORAGE_KEY = "typingjourney:last-practice";
 const PERSONAL_BESTS_STORAGE_KEY = "typingjourney:personal-bests";
 const ESSAY_PROGRESS_STORAGE_KEY = "typingjourney:essay-progress";
+const SESSION_HISTORY_STORAGE_KEY = "typingjourney:session-history";
 const ESSAY_IDLE_AUTO_PAUSE_MS = 15_000;
+const CUSTOM_TEXT_MIN_LENGTH = 40;
+const SESSION_HISTORY_LIMIT = 80;
 
 type EssayBest = {
   elapsedMs: number;
@@ -167,6 +198,18 @@ function storeLastPractice(practice: LastPractice) {
   }
 }
 
+function clearLastPractice() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(LAST_PRACTICE_STORAGE_KEY);
+  } catch {
+    // Last practice is a convenience; custom practice can continue without it.
+  }
+}
+
 function getStoredLastPractice(): LastPractice | null {
   if (typeof window === "undefined") {
     return null;
@@ -211,6 +254,47 @@ function getStoredLastPractice(): LastPractice | null {
   return null;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function getNonNegativeNumber(value: unknown) {
+  return isFiniteNumber(value) ? Math.max(0, value) : null;
+}
+
+function getNonNegativeInteger(value: unknown) {
+  return isFiniteNumber(value) ? Math.max(0, Math.floor(value)) : null;
+}
+
+function clampPercentage(value: unknown) {
+  return isFiniteNumber(value) ? Math.min(100, Math.max(0, value)) : null;
+}
+
+function isKnownEssayId(essayId: string) {
+  return essayContents.some((content) => content.id === essayId);
+}
+
+function parseStoredEssayBest(value: unknown): EssayBest | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const best = value as Partial<EssayBest>;
+  const elapsedMs = getNonNegativeNumber(best.elapsedMs);
+  const wpm = getNonNegativeNumber(best.wpm);
+  const completedAt = getNonNegativeNumber(best.completedAt);
+
+  if (elapsedMs === null || wpm === null || completedAt === null) {
+    return null;
+  }
+
+  return {
+    elapsedMs,
+    wpm,
+    completedAt
+  };
+}
+
 function getStoredPersonalBests(): PersonalBests {
   if (typeof window === "undefined") {
     return EMPTY_PERSONAL_BESTS;
@@ -224,22 +308,25 @@ function getStoredPersonalBests(): PersonalBests {
     }
 
     const parsedBests = JSON.parse(storedBests) as Partial<PersonalBests>;
+    const essayBestEntries =
+      parsedBests.essays && typeof parsedBests.essays === "object"
+        ? Object.entries(parsedBests.essays).flatMap(([essayId, best]) => {
+            const parsedBest = parseStoredEssayBest(best);
+
+            return isKnownEssayId(essayId) && parsedBest
+              ? [[essayId, parsedBest] satisfies [string, EssayBest]]
+              : [];
+          })
+        : [];
+    const oneMinuteBest = getNonNegativeNumber(parsedBests.timed?.["60000"]);
+    const threeMinuteBest = getNonNegativeNumber(parsedBests.timed?.["180000"]);
 
     return {
       timed: {
-        "60000":
-          typeof parsedBests.timed?.["60000"] === "number"
-            ? parsedBests.timed["60000"]
-            : undefined,
-        "180000":
-          typeof parsedBests.timed?.["180000"] === "number"
-            ? parsedBests.timed["180000"]
-            : undefined
+        "60000": oneMinuteBest ?? undefined,
+        "180000": threeMinuteBest ?? undefined
       },
-      essays:
-        parsedBests.essays && typeof parsedBests.essays === "object"
-          ? parsedBests.essays
-          : {}
+      essays: Object.fromEntries(essayBestEntries)
     };
   } catch {
     return EMPTY_PERSONAL_BESTS;
@@ -259,6 +346,172 @@ function storePersonalBests(bests: PersonalBests) {
   } catch {
     // Personal bests are progressive enhancement; practice still works.
   }
+}
+
+function parseStoredPracticeResult(value: unknown): PracticeResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const result = value as Partial<PracticeResult>;
+  const durationMs = getNonNegativeNumber(result.durationMs);
+  const elapsedMs = getNonNegativeNumber(result.elapsedMs);
+  const wpm = getNonNegativeNumber(result.wpm);
+  const accuracy = clampPercentage(result.accuracy);
+  const errors = getNonNegativeInteger(result.errors);
+  const typedChars = getNonNegativeInteger(result.typedChars);
+  const completedAt = getNonNegativeNumber(result.completedAt);
+
+  if (
+    typeof result.id !== "string" ||
+    result.id.trim().length === 0 ||
+    typeof result.practiceKey !== "string" ||
+    result.practiceKey.trim().length === 0 ||
+    (result.mode !== "timed" &&
+      result.mode !== "essay" &&
+      result.mode !== "custom") ||
+    durationMs === null ||
+    elapsedMs === null ||
+    wpm === null ||
+    accuracy === null ||
+    errors === null ||
+    typedChars === null ||
+    completedAt === null
+  ) {
+    return null;
+  }
+
+  return {
+    id: result.id,
+    practiceKey: result.practiceKey,
+    mode: result.mode,
+    title:
+      typeof result.title === "string" && result.title.trim()
+        ? result.title
+        : "Untitled practice",
+    completedAt,
+    durationMs,
+    elapsedMs,
+    wpm,
+    accuracy,
+    errors,
+    typedChars,
+    essayId:
+      typeof result.essayId === "string" && isKnownEssayId(result.essayId)
+        ? result.essayId
+        : undefined,
+    sourceEssayId:
+      typeof result.sourceEssayId === "string" ? result.sourceEssayId : undefined
+  };
+}
+
+function getStoredSessionHistory(): PracticeResult[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const storedHistory = window.localStorage.getItem(
+      SESSION_HISTORY_STORAGE_KEY
+    );
+
+    if (!storedHistory) {
+      return [];
+    }
+
+    const parsedHistory = JSON.parse(storedHistory);
+
+    if (!Array.isArray(parsedHistory)) {
+      return [];
+    }
+
+    const sortedHistory = parsedHistory
+      .flatMap((result) => {
+        const parsedResult = parseStoredPracticeResult(result);
+
+        return parsedResult ? [parsedResult] : [];
+      })
+      .sort((a, b) => b.completedAt - a.completedAt);
+    const uniqueHistory = new Map<string, PracticeResult>();
+
+    for (const result of sortedHistory) {
+      if (!uniqueHistory.has(result.id)) {
+        uniqueHistory.set(result.id, result);
+      }
+    }
+
+    return Array.from(uniqueHistory.values()).slice(0, SESSION_HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function storeSessionHistory(history: PracticeResult[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      SESSION_HISTORY_STORAGE_KEY,
+      JSON.stringify(history.slice(0, SESSION_HISTORY_LIMIT))
+    );
+  } catch {
+    // History is local-only progress context; practice still works.
+  }
+}
+
+function getPracticeKey(
+  mode: ChallengeMode,
+  content: TypingContent,
+  durationMs: number
+) {
+  if (mode === "timed") {
+    return `timed:${durationMs}`;
+  }
+
+  return `${mode}:${content.id}`;
+}
+
+function getResultId(
+  mode: ChallengeMode,
+  contentId: string,
+  startedAt: number | null,
+  finishedAt: number | null
+) {
+  return [mode, contentId, startedAt ?? "idle", finishedAt ?? "complete"].join(
+    ":"
+  );
+}
+
+function createPracticeResult({
+  content,
+  durationMs,
+  mode,
+  resultId,
+  stats
+}: {
+  content: TypingContent;
+  durationMs: number;
+  mode: ChallengeMode;
+  resultId: string;
+  stats: ReturnType<typeof getStats>;
+}): PracticeResult {
+  return {
+    id: resultId,
+    practiceKey: getPracticeKey(mode, content, durationMs),
+    mode,
+    title: content.title,
+    completedAt: Date.now(),
+    durationMs,
+    elapsedMs: stats.elapsedMs,
+    wpm: stats.wpm,
+    accuracy: stats.accuracy,
+    errors: stats.errors,
+    typedChars: stats.typedChars,
+    essayId: mode === "essay" ? content.id : undefined,
+    sourceEssayId: content.sourceEssayId
+  };
 }
 
 function isStoredTypedCharacter(value: unknown): value is TypedCharacter {
@@ -447,6 +700,30 @@ function formatSavedEssayProgress(
   return `${percentComplete}% saved`;
 }
 
+function getEssayJourneyState(
+  content: TypingContent,
+  best?: EssayBest,
+  progress?: StoredEssayProgress
+): EssayJourneyState {
+  if (getRestorableEssayProgress(content, progress)) {
+    return "saved";
+  }
+
+  return best ? "finished" : "unstarted";
+}
+
+function formatEssayJourneyState(state: EssayJourneyState) {
+  if (state === "saved") {
+    return "In progress";
+  }
+
+  if (state === "finished") {
+    return "Finished";
+  }
+
+  return "Unstarted";
+}
+
 function formatBestWpm(bestWpm?: number) {
   return bestWpm === undefined
     ? "No best yet"
@@ -457,6 +734,170 @@ function formatBestTime(best?: EssayBest) {
   return best
     ? `Best ${formatDurationLabel(best.elapsedMs)}`
     : "No best time yet";
+}
+
+function getAverage(values: number[]) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+function formatModeLabel(mode: ChallengeMode) {
+  if (mode === "timed") {
+    return "Timed";
+  }
+
+  if (mode === "custom") {
+    return "Custom";
+  }
+
+  return "Essay";
+}
+
+function formatHotspotCharacter(char: string) {
+  if (char === " ") {
+    return "space";
+  }
+
+  if (char === "\n") {
+    return "return";
+  }
+
+  if (char === "\t") {
+    return "tab";
+  }
+
+  return char;
+}
+
+function buildResultContext({
+  hotspots,
+  mode,
+  previousResults,
+  stats
+}: {
+  hotspots: MistakeHotspot[];
+  mode: ChallengeMode;
+  previousResults: PracticeResult[];
+  stats: ReturnType<typeof getStats>;
+}) {
+  const previousRun = previousResults[0];
+  const bestRun =
+    mode === "essay"
+      ? previousResults.reduce<PracticeResult | null>(
+          (best, result) =>
+            !best || result.elapsedMs < best.elapsedMs ? result : best,
+          null
+        )
+      : previousResults.reduce<PracticeResult | null>(
+          (best, result) => (!best || result.wpm > best.wpm ? result : best),
+          null
+        );
+  const isNewBest =
+    !bestRun ||
+    (mode === "essay"
+      ? stats.elapsedMs < bestRun.elapsedMs
+      : stats.wpm > bestRun.wpm);
+  const comparison = previousRun
+    ? formatResultComparison(mode, stats, previousRun)
+    : "First saved result for this practice.";
+  const notes = [
+    getAccuracyNote(stats),
+    previousRun ? getPaceNote(stats, previousRun) : null,
+    getHotspotNote(hotspots),
+    mode === "essay"
+      ? "Full-essay work rewards calm corrections more than raw speed."
+      : mode === "custom"
+        ? "Custom text is now part of your local progress history."
+        : "Timed sprints are best read as trend data, not a single verdict."
+  ].filter((note): note is string => Boolean(note));
+
+  return {
+    badge: isNewBest
+      ? mode === "essay"
+        ? "New best time"
+        : "New WPM best"
+      : "Result saved",
+    comparison,
+    notes
+  };
+}
+
+function formatResultComparison(
+  mode: ChallengeMode,
+  stats: ReturnType<typeof getStats>,
+  previousRun: PracticeResult
+) {
+  if (mode === "essay") {
+    const deltaMs = previousRun.elapsedMs - stats.elapsedMs;
+
+    if (Math.abs(deltaMs) < 1_000) {
+      return "Within a second of your last run.";
+    }
+
+    return deltaMs > 0
+      ? `${formatDurationLabel(deltaMs)} faster than your last run.`
+      : `${formatDurationLabel(Math.abs(deltaMs))} slower than your last run.`;
+  }
+
+  const deltaWpm = stats.wpm - previousRun.wpm;
+
+  if (Math.abs(deltaWpm) < 0.5) {
+    return "Matched your last comparable pace.";
+  }
+
+  return deltaWpm > 0
+    ? `${Math.round(deltaWpm)} WPM faster than your last comparable run.`
+    : `${Math.round(Math.abs(deltaWpm))} WPM slower than your last comparable run.`;
+}
+
+function getAccuracyNote(stats: ReturnType<typeof getStats>) {
+  if (stats.accuracy >= 98) {
+    return "Accuracy stayed clean; you can safely nudge the pace next time.";
+  }
+
+  if (stats.accuracy >= 94) {
+    return "Accuracy is close; most gains will come from catching slips earlier.";
+  }
+
+  return "Accuracy is the main lever; slow down until the error line settles.";
+}
+
+function getPaceNote(
+  stats: ReturnType<typeof getStats>,
+  previousRun: PracticeResult
+) {
+  const deltaWpm = stats.wpm - previousRun.wpm;
+
+  if (Math.abs(deltaWpm) < 1) {
+    return "Your pace is steady against the last comparable session.";
+  }
+
+  return deltaWpm > 0
+    ? "Your pace moved up; protect that gain with a clean first line."
+    : "Your pace dipped; start the next run a touch slower and build rhythm.";
+}
+
+function getHotspotNote(hotspots: MistakeHotspot[]) {
+  const hotspot = hotspots[0];
+
+  if (!hotspot) {
+    return "No active mistakes in the final text.";
+  }
+
+  return `Watch ${formatHotspotCharacter(hotspot.expected)} when your fingers want ${formatHotspotCharacter(
+    hotspot.actual
+  )}.`;
+}
+
+function formatHistoryBarHeight(wpm: number, maxWpm: number) {
+  if (maxWpm <= 0 || wpm <= 0) {
+    return "12%";
+  }
+
+  return `${Math.min(100, Math.max(12, (wpm / maxWpm) * 100))}%`;
 }
 
 type ResetSessionOptions = {
@@ -537,10 +978,20 @@ export function App() {
   const [selectedEssayId, setSelectedEssayId] = useState(
     initialPracticeState.selectedEssayId
   );
+  const [customContent, setCustomContent] = useState<TypingContent | null>(
+    null
+  );
   const [essayPickerOpen, setEssayPickerOpen] = useState(false);
   const [essaySearchQuery, setEssaySearchQuery] = useState("");
+  const [essayJourneyFilter, setEssayJourneyFilter] =
+    useState<EssayJourneyFilter>("all");
+  const [customTextOpen, setCustomTextOpen] = useState(false);
+  const [customTextDraft, setCustomTextDraft] = useState("");
   const [personalBests, setPersonalBests] = useState<PersonalBests>(() =>
     getStoredPersonalBests()
+  );
+  const [sessionHistory, setSessionHistory] = useState<PracticeResult[]>(() =>
+    getStoredSessionHistory()
   );
   const [essayProgresses, setEssayProgresses] =
     useState<StoredEssayProgresses>(initialPracticeState.essayProgresses);
@@ -563,7 +1014,12 @@ export function App() {
     [selectedEssayId]
   );
 
-  const activeContent = mode === "timed" ? timedContent : selectedEssayContent;
+  const activeContent =
+    mode === "timed"
+      ? timedContent
+      : mode === "custom"
+        ? customContent ?? selectedEssayContent
+        : selectedEssayContent;
 
   const stats = getStats(session, nowMs);
   const mistakeHotspots = useMemo(() => getMistakeHotspots(session), [session]);
@@ -581,29 +1037,114 @@ export function App() {
     mode === "timed"
       ? `${Math.round(timedDurationMs / ONE_MINUTE_MS)} minute test`
       : activeContent.title;
-  const finishedEssayCount = Object.keys(personalBests.essays).length;
-  const savedEssayProgressCount = Object.values(essayProgresses).filter(
-    (progress) =>
-      getRestorableEssayProgress(getEssayContent(progress.essayId), progress)
+  const activePracticeKey = getPracticeKey(
+    mode,
+    activeContent,
+    session.durationMs
+  );
+  const activeResultId =
+    stats.completed && session.startedAt !== null
+      ? getResultId(
+          mode,
+          activeContent.id,
+          session.startedAt,
+          session.finishedAt
+        )
+      : null;
+  const previousComparableResults = useMemo(
+    () =>
+      sessionHistory.filter(
+        (result) =>
+          result.practiceKey === activePracticeKey &&
+          result.id !== activeResultId
+      ),
+    [activePracticeKey, activeResultId, sessionHistory]
+  );
+  const resultContext = useMemo(
+    () =>
+      buildResultContext({
+        hotspots: mistakeHotspots,
+        mode,
+        previousResults: previousComparableResults,
+        stats
+      }),
+    [mistakeHotspots, mode, previousComparableResults, stats]
+  );
+  const finishedEssayCount = essayContents.filter(
+    (content) => personalBests.essays[content.id]
   ).length;
+  const savedEssayProgressCount = essayContents.filter((content) =>
+    getRestorableEssayProgress(content, essayProgresses[content.id])
+  ).length;
+  const essayJourneyCounts = useMemo(
+    () =>
+      essayContents.reduce(
+        (counts, content) => {
+          counts[
+            getEssayJourneyState(
+              content,
+              personalBests.essays[content.id],
+              essayProgresses[content.id]
+            )
+          ] += 1;
+
+          return counts;
+        },
+        { all: essayContents.length, saved: 0, unstarted: 0, finished: 0 }
+      ),
+    [essayProgresses, personalBests.essays]
+  );
   const filteredEssayContents = useMemo(() => {
     const normalizedSearchQuery = essaySearchQuery.trim().toLowerCase();
 
-    if (!normalizedSearchQuery) {
-      return essayContents;
-    }
+    return essayContents.filter((content) => {
+      const matchesSearch =
+        !normalizedSearchQuery ||
+        [content.title, content.author, content.description]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedSearchQuery);
 
-    return essayContents.filter((content) =>
-      [content.title, content.author, content.description]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalizedSearchQuery)
-    );
-  }, [essaySearchQuery]);
+      if (!matchesSearch) {
+        return false;
+      }
+
+      if (essayJourneyFilter === "all") {
+        return true;
+      }
+
+      return (
+        getEssayJourneyState(
+          content,
+          personalBests.essays[content.id],
+          essayProgresses[content.id]
+        ) === essayJourneyFilter
+      );
+    });
+  }, [essayJourneyFilter, essayProgresses, essaySearchQuery, personalBests.essays]);
   const essayCountLabel =
     filteredEssayContents.length === essayContents.length
       ? `${essayContents.length} essays`
       : `${filteredEssayContents.length} shown`;
+  const normalizedCustomText = normalizeTypingText(customTextDraft);
+  const customTextCharacterCount = normalizedCustomText.length;
+  const canStartCustomText = customTextCharacterCount >= CUSTOM_TEXT_MIN_LENGTH;
+  const recentHistory = sessionHistory.slice(0, 8);
+  const recentFiveResults = sessionHistory.slice(0, 5);
+  const averageRecentWpm = getAverage(
+    recentFiveResults.map((result) => result.wpm)
+  );
+  const averageRecentAccuracy = getAverage(
+    recentFiveResults.map((result) => result.accuracy)
+  );
+  const bestHistoryResult = sessionHistory.reduce<PracticeResult | null>(
+    (best, result) => (!best || result.wpm > best.wpm ? result : best),
+    null
+  );
+  const trendMaxWpm = Math.max(
+    1,
+    ...recentHistory.map((result) => result.wpm)
+  );
 
   const focusInput = useCallback(() => {
     inputRef.current?.focus({ preventScroll: true });
@@ -646,7 +1187,7 @@ export function App() {
     const currentSession = sessionRef.current;
 
     if (
-      currentSession.mode === "essay" &&
+      currentSession.mode !== "timed" &&
       currentSession.entries.length > 0 &&
       currentSession.finishedAt === null
     ) {
@@ -656,7 +1197,10 @@ export function App() {
       sessionRef.current = pausedSession;
       setSession(pausedSession);
       setNowMs(currentTime);
-      saveEssaySessionProgress(activeContent.id, pausedSession, currentTime);
+
+      if (pausedSession.mode === "essay") {
+        saveEssaySessionProgress(activeContent.id, pausedSession, currentTime);
+      }
     }
 
     updateBrowserRoute("/", "replace");
@@ -675,11 +1219,17 @@ export function App() {
         content ??
         (nextMode === "timed"
           ? getRandomTimedContent(durationMs, timedContent.sourceEssayId)
-          : selectedEssayContent);
+          : nextMode === "custom"
+            ? customContent ?? createCustomContent(customTextDraft)
+            : selectedEssayContent);
 
       if (nextMode === "timed") {
         setTimedContent(nextContent);
         setTimedDurationMs(durationMs);
+      }
+
+      if (nextMode === "custom") {
+        setCustomContent(nextContent);
       }
 
       const nextSession =
@@ -702,6 +1252,8 @@ export function App() {
       window.requestAnimationFrame(focusInput);
     },
     [
+      customContent,
+      customTextDraft,
       focusInput,
       mode,
       selectedEssayContent,
@@ -797,7 +1349,7 @@ export function App() {
   useEffect(() => {
     if (
       !isTypingRoute ||
-      mode !== "essay" ||
+      mode === "timed" ||
       session.startedAt === null ||
       session.pausedAt !== null ||
       session.finishedAt !== null ||
@@ -812,7 +1364,7 @@ export function App() {
       setNowMs(currentTime);
       setSession((previous) => {
         if (
-          previous.mode !== "essay" ||
+          previous.mode === "timed" ||
           previous.startedAt === null ||
           previous.pausedAt !== null ||
           previous.finishedAt !== null ||
@@ -824,7 +1376,11 @@ export function App() {
         const next = pauseSession(previous, currentTime);
 
         sessionRef.current = next;
-        saveEssaySessionProgress(activeContent.id, next, currentTime);
+
+        if (next.mode === "essay") {
+          saveEssaySessionProgress(activeContent.id, next, currentTime);
+        }
+
         return next;
       });
     }, ESSAY_IDLE_AUTO_PAUSE_MS);
@@ -858,18 +1414,38 @@ export function App() {
       return;
     }
 
-    const resultKey = [
+    const resultKey = getResultId(
       mode,
       activeContent.id,
       session.startedAt,
-      session.finishedAt ?? "complete"
-    ].join(":");
+      session.finishedAt
+    );
 
     if (recordedResultRef.current === resultKey) {
       return;
     }
 
     recordedResultRef.current = resultKey;
+
+    setSessionHistory((currentHistory) => {
+      if (currentHistory.some((result) => result.id === resultKey)) {
+        return currentHistory;
+      }
+
+      const nextHistory = [
+        createPracticeResult({
+          content: activeContent,
+          durationMs: session.durationMs,
+          mode,
+          resultId: resultKey,
+          stats
+        }),
+        ...currentHistory
+      ].slice(0, SESSION_HISTORY_LIMIT);
+
+      storeSessionHistory(nextHistory);
+      return nextHistory;
+    });
 
     if (mode === "essay") {
       updateEssayProgress(activeContent.id, null);
@@ -919,15 +1495,19 @@ export function App() {
       return nextBests;
     });
   }, [
+    activeContent,
     activeContent.id,
     isTypingRoute,
     mode,
     session.finishedAt,
     session.startedAt,
+    stats.accuracy,
     stats.completed,
     stats.elapsedMs,
+    stats.errors,
     stats.typedChars,
     stats.wpm,
+    session.durationMs,
     timedDurationMs,
     updateEssayProgress
   ]);
@@ -947,6 +1527,7 @@ export function App() {
       setTimedDurationMs(durationMs);
       setTimedContent(content);
       setEssayPickerOpen(false);
+      setCustomTextOpen(false);
       setEssaySearchQuery("");
       rememberPractice({ mode: "timed", durationMs });
       resetSession({ nextMode: "timed", durationMs, content });
@@ -979,6 +1560,7 @@ export function App() {
       setMode("essay");
       setSelectedEssayId(content.id);
       setEssayPickerOpen(false);
+      setCustomTextOpen(false);
       setEssaySearchQuery("");
       rememberPractice({ mode: "essay", essayId: content.id });
       resetSession({
@@ -1006,8 +1588,36 @@ export function App() {
     []
   );
 
+  const handleCustomTextChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) => {
+      setCustomTextDraft(event.target.value);
+    },
+    []
+  );
+
+  const handleStartCustomChallenge = useCallback(() => {
+    const content = createCustomContent(customTextDraft);
+
+    if (content.text.length < CUSTOM_TEXT_MIN_LENGTH) {
+      return;
+    }
+
+    setMode("custom");
+    setCustomContent(content);
+    setEssayPickerOpen(false);
+    setCustomTextOpen(false);
+    setEssaySearchQuery("");
+    clearLastPractice();
+    resetSession({
+      nextMode: "custom",
+      durationMs: ONE_MINUTE_MS,
+      content
+    });
+    navigateToTyping();
+  }, [customTextDraft, navigateToTyping, resetSession]);
+
   const handleToggleEssayPause = useCallback(() => {
-    if (mode !== "essay" || stats.completed) {
+    if ((mode !== "essay" && mode !== "custom") || stats.completed) {
       return;
     }
 
@@ -1021,7 +1631,11 @@ export function App() {
         : pauseSession(previous, currentTime);
 
       sessionRef.current = next;
-      saveEssaySessionProgress(activeContent.id, next, currentTime);
+
+      if (next.mode === "essay") {
+        saveEssaySessionProgress(activeContent.id, next, currentTime);
+      }
+
       return next;
     });
 
@@ -1242,13 +1856,15 @@ export function App() {
               <span>Restart</span>
             </button>
           ) : null}
-          {isTypingRoute && mode === "essay" && !isResultsScreen ? (
+          {isTypingRoute &&
+          (mode === "essay" || mode === "custom") &&
+          !isResultsScreen ? (
             <button
               className="icon-action"
               type="button"
               onClick={handleToggleEssayPause}
               disabled={session.startedAt === null}
-              title={isPaused ? "Continue essay" : "Pause essay"}
+              title={isPaused ? "Continue practice" : "Pause practice"}
             >
               {isPaused ? <Play size={18} /> : <Pause size={18} />}
               <span>{isPaused ? "Continue" : "Pause"}</span>
@@ -1264,19 +1880,23 @@ export function App() {
               <p className="eyebrow">
                 {mode === "timed"
                   ? "Timed practice"
-                  : activeContent.author}
+                  : mode === "custom"
+                    ? "Custom practice"
+                    : activeContent.author}
               </p>
               <h1>{activePracticeTitle}</h1>
-              <a
-                className="source-link"
-                href={activeContent.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {mode === "timed"
-                  ? activeContent.title.replace(/^(1|3)-Minute: /, "")
-                  : "Source"}
-              </a>
+              {activeContent.sourceUrl ? (
+                <a
+                  className="source-link"
+                  href={activeContent.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {mode === "timed"
+                    ? activeContent.title.replace(/^(1|3)-Minute: /, "")
+                    : "Source"}
+                </a>
+              ) : null}
             </div>
 
             <div className="test-metrics" aria-live="polite">
@@ -1304,8 +1924,12 @@ export function App() {
               mode={mode}
               stats={stats}
               hotspots={mistakeHotspots}
+              totalMisses={session.mistakes.length}
               title={activePracticeTitle}
               durationLabel={formatDurationLabel(stats.elapsedMs)}
+              resultBadge={resultContext.badge}
+              resultComparison={resultContext.comparison}
+              coachingNotes={resultContext.notes}
               onChooseAnother={navigateHome}
               onRetry={() => resetSession()}
             />
@@ -1383,7 +2007,10 @@ export function App() {
                 .filter(Boolean)
                 .join(" ")}
               type="button"
-              onClick={() => setEssayPickerOpen((open) => !open)}
+              onClick={() => {
+                setCustomTextOpen(false);
+                setEssayPickerOpen((open) => !open);
+              }}
               aria-expanded={essayPickerOpen}
               aria-controls="essay-chooser"
             >
@@ -1405,13 +2032,88 @@ export function App() {
               </span>
               <ChevronDown className="practice-card-action essay-card-arrow" size={18} />
             </button>
+
+            <button
+              className={[
+                "practice-card",
+                "practice-card-custom",
+                customTextOpen ? "practice-card-open" : ""
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              type="button"
+              onClick={() => {
+                setEssayPickerOpen(false);
+                setCustomTextOpen((open) => !open);
+              }}
+              aria-expanded={customTextOpen}
+              aria-controls="custom-text-chooser"
+            >
+              <span className="mode-icon mode-icon-custom">
+                <ClipboardType size={20} />
+              </span>
+              <span className="practice-card-copy">
+                <span className="practice-card-title">Custom text</span>
+                <span className="practice-card-detail">
+                  Paste text / Full accuracy
+                </span>
+                <span className="best-chip">
+                  {customTextCharacterCount > 0
+                    ? `${customTextCharacterCount} chars ready`
+                    : "Bring your own"}
+                </span>
+              </span>
+              <ChevronDown className="practice-card-action essay-card-arrow" size={18} />
+            </button>
           </div>
+
+          {customTextOpen ? (
+            <section
+              className="custom-chooser"
+              id="custom-text-chooser"
+              aria-label="Custom text practice"
+            >
+              <div className="essay-chooser-header">
+                <h2>Custom text</h2>
+                <span>{customTextCharacterCount.toLocaleString()} chars</span>
+              </div>
+
+              <textarea
+                className="custom-textarea"
+                aria-label="Custom practice text"
+                value={customTextDraft}
+                onChange={handleCustomTextChange}
+                placeholder="Paste text to practice"
+                spellCheck={false}
+              />
+
+              <div className="custom-actions">
+                <span>
+                  {canStartCustomText
+                    ? "Ready"
+                    : `${Math.max(
+                        0,
+                        CUSTOM_TEXT_MIN_LENGTH - customTextCharacterCount
+                      )} more chars`}
+                </span>
+                <button
+                  className="primary-action"
+                  type="button"
+                  onClick={handleStartCustomChallenge}
+                  disabled={!canStartCustomText}
+                >
+                  <Play size={18} />
+                  Start custom
+                </button>
+              </div>
+            </section>
+          ) : null}
 
           {essayPickerOpen ? (
             <section
               className="essay-chooser"
               id="essay-chooser"
-              aria-label="Essay list"
+              aria-label="Essay chooser"
             >
               <div className="essay-chooser-header">
                 <h2>Choose an essay</h2>
@@ -1431,11 +2133,43 @@ export function App() {
                 />
               </label>
 
-              <div className="essay-list">
+              <div
+                className="essay-filter-tabs"
+                role="group"
+                aria-label="Essay journey filters"
+              >
+                {(
+                  [
+                    ["all", "All", essayJourneyCounts.all],
+                    ["saved", "Saved", essayJourneyCounts.saved],
+                    ["unstarted", "Unstarted", essayJourneyCounts.unstarted],
+                    ["finished", "Finished", essayJourneyCounts.finished]
+                  ] as const
+                ).map(([filter, label, count]) => (
+                  <button
+                    className={
+                      essayJourneyFilter === filter ? "filter-tab-active" : ""
+                    }
+                    type="button"
+                    key={filter}
+                    onClick={() => setEssayJourneyFilter(filter)}
+                  >
+                    {label}
+                    <span>{count}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="essay-list" role="region" aria-label="Essay list">
                 {filteredEssayContents.map((content) => {
                   const essayBest = personalBests.essays[content.id];
                   const savedProgressLabel = formatSavedEssayProgress(
                     content,
+                    essayProgresses[content.id]
+                  );
+                  const journeyState = getEssayJourneyState(
+                    content,
+                    essayBest,
                     essayProgresses[content.id]
                   );
 
@@ -1461,7 +2195,10 @@ export function App() {
                         </span>
                       </span>
                       <span className="essay-row-best">
-                        {savedProgressLabel ?? formatBestTime(essayBest)}
+                        <span className={`essay-status essay-status-${journeyState}`}>
+                          {formatEssayJourneyState(journeyState)}
+                        </span>
+                        <span>{savedProgressLabel ?? formatBestTime(essayBest)}</span>
                       </span>
                     </button>
                   );
@@ -1472,6 +2209,78 @@ export function App() {
               </div>
             </section>
           ) : null}
+
+          <section className="progress-panel" aria-label="Progress history">
+            <div className="progress-panel-header">
+              <div>
+                <p className="eyebrow">Progress</p>
+                <h2>Recent sessions</h2>
+              </div>
+              <BarChart3 size={22} />
+            </div>
+
+            {sessionHistory.length > 0 ? (
+              <>
+                <div className="history-summary" aria-label="Progress summary">
+                  <div>
+                    <span>{sessionHistory.length}</span>
+                    <small>sessions</small>
+                  </div>
+                  <div>
+                    <span>{Math.round(averageRecentWpm)}</span>
+                    <small>avg wpm</small>
+                  </div>
+                  <div>
+                    <span>{Math.round(averageRecentAccuracy)}%</span>
+                    <small>avg accuracy</small>
+                  </div>
+                  <div>
+                    <span>
+                      {bestHistoryResult
+                        ? Math.round(bestHistoryResult.wpm)
+                        : 0}
+                    </span>
+                    <small>best wpm</small>
+                  </div>
+                </div>
+
+                <div className="history-bars" aria-label="Recent WPM trend">
+                  {[...recentHistory].reverse().map((result) => (
+                    <span
+                      className="history-bar"
+                      key={result.id}
+                      title={`${Math.round(result.wpm)} WPM, ${Math.round(
+                        result.accuracy
+                      )}% accuracy`}
+                    >
+                      <span
+                        style={{
+                          height: formatHistoryBarHeight(result.wpm, trendMaxWpm)
+                        }}
+                      />
+                    </span>
+                  ))}
+                </div>
+
+                <div className="history-list">
+                  {sessionHistory.slice(0, 4).map((result) => (
+                    <div className="history-row" key={result.id}>
+                      <span>
+                        <strong>{Math.round(result.wpm)} WPM</strong>
+                        <small>
+                          {Math.round(result.accuracy)}% /{" "}
+                          {formatModeLabel(result.mode)}
+                        </small>
+                      </span>
+                      <span>{result.title}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="history-empty">No sessions yet.</p>
+            )}
+          </section>
         </section>
       )}
     </main>

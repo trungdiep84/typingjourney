@@ -1,7 +1,7 @@
 import essays from "./generated/paulGrahamEssays.json";
 import type { TypingContent } from "../typing/types";
 
-function normalizeTypingText(text: string) {
+export function normalizeTypingText(text: string) {
   return text
     .replace(/\r\n?/g, "\n")
     .split(/\n{2,}/)
@@ -114,4 +114,29 @@ export function getRandomTimedContent(
     description: `Random timed excerpt from "${source.title}".`,
     text: buildTimedExcerpt(source.text, targetLength)
   };
+}
+
+export function createCustomContent(text: string): TypingContent {
+  const normalizedText = normalizeTypingText(text);
+  const hash = createStableHash(normalizedText);
+  const firstLine = normalizedText.split("\n")[0] ?? "";
+  const titlePreview = firstLine.slice(0, 54).trim();
+
+  return {
+    id: `custom-${hash}`,
+    title: titlePreview ? `Custom: ${titlePreview}` : "Custom text",
+    author: "You",
+    description: `${normalizedText.length.toLocaleString()} characters`,
+    text: normalizedText
+  };
+}
+
+function createStableHash(text: string) {
+  let hash = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) >>> 0;
+  }
+
+  return hash.toString(36);
 }

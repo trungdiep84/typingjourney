@@ -166,6 +166,28 @@ describe("typing engine", () => {
     expect(stats.typedChars).toBe(4);
   });
 
+  it("completes custom mode when all characters are correct", () => {
+    let session = createTypingSession({ mode: "custom", text: "custom" });
+
+    session = typeText(session, "custom", 2_000);
+
+    const stats = getStats(session, 3_000);
+
+    expect(session.finishedAt).toBe(2_000);
+    expect(stats.completed).toBe(true);
+    expect(pauseSession(session, 4_000).pausedAt).toBeNull();
+  });
+
+  it("can pause custom mode before completion", () => {
+    let session = createTypingSession({ mode: "custom", text: "custom" });
+
+    session = typeCharacter(session, "c", 1_000);
+    session = pauseSession(session, 4_000);
+
+    expect(session.pausedAt).toBe(4_000);
+    expect(getStats(session, 9_000).elapsedMs).toBe(3_000);
+  });
+
   it("accepts paragraph breaks as typed newline characters", () => {
     let session = createTypingSession({ mode: "essay", text: "a\n\nb" });
 
