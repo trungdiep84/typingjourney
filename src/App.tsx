@@ -51,7 +51,6 @@ import {
 } from "./typing/typingEngine";
 import type {
   ChallengeMode,
-  MistakeHotspot,
   TypedCharacter,
   TypingContent,
   TypingSession
@@ -95,6 +94,10 @@ function formatDurationLabel(milliseconds: number) {
   const seconds = totalSeconds % 60;
 
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function formatCount(count: number, singular: string, plural: string) {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 type AppRoute = "home" | "typing";
@@ -808,34 +811,15 @@ function formatHistoryTrendLabel(results: PracticeResult[]) {
     .join(", ")}.`;
 }
 
-function formatHotspotCharacter(char: string) {
-  if (char === " ") {
-    return "space";
-  }
-
-  if (char === "\n") {
-    return "return";
-  }
-
-  if (char === "\t") {
-    return "tab";
-  }
-
-  return char;
-}
-
-function buildResultContext({
-  hotspots,
+function getResultBadge({
   mode,
   previousResults,
   stats
 }: {
-  hotspots: MistakeHotspot[];
   mode: ChallengeMode;
   previousResults: PracticeResult[];
   stats: ReturnType<typeof getStats>;
 }) {
-  const previousRun = previousResults[0];
   const bestRun =
     mode === "essay"
       ? previousResults.reduce<PracticeResult | null>(
@@ -852,96 +836,12 @@ function buildResultContext({
     (mode === "essay"
       ? stats.elapsedMs < bestRun.elapsedMs
       : stats.wpm > bestRun.wpm);
-  const comparison = previousRun
-    ? formatResultComparison(mode, stats, previousRun)
-    : "First saved result for this practice.";
-  const notes = [
-    getAccuracyNote(stats),
-    previousRun ? getPaceNote(stats, previousRun) : null,
-    getHotspotNote(hotspots),
-    mode === "essay"
-      ? "Full-essay work rewards calm corrections more than raw speed."
-      : mode === "custom"
-        ? "Custom text is now part of your local progress history."
-        : "Timed sprints are best read as trend data, not a single verdict."
-  ].filter((note): note is string => Boolean(note));
 
-  return {
-    badge: isNewBest
-      ? mode === "essay"
-        ? "New best time"
-        : "New WPM best"
-      : "Result saved",
-    comparison,
-    notes
-  };
-}
-
-function formatResultComparison(
-  mode: ChallengeMode,
-  stats: ReturnType<typeof getStats>,
-  previousRun: PracticeResult
-) {
-  if (mode === "essay") {
-    const deltaMs = previousRun.elapsedMs - stats.elapsedMs;
-
-    if (Math.abs(deltaMs) < 1_000) {
-      return "Within a second of your last run.";
-    }
-
-    return deltaMs > 0
-      ? `${formatDurationLabel(deltaMs)} faster than your last run.`
-      : `${formatDurationLabel(Math.abs(deltaMs))} slower than your last run.`;
+  if (!isNewBest) {
+    return "Completed";
   }
 
-  const deltaWpm = stats.wpm - previousRun.wpm;
-
-  if (Math.abs(deltaWpm) < 0.5) {
-    return "Matched your last comparable pace.";
-  }
-
-  return deltaWpm > 0
-    ? `${Math.round(deltaWpm)} WPM faster than your last comparable run.`
-    : `${Math.round(Math.abs(deltaWpm))} WPM slower than your last comparable run.`;
-}
-
-function getAccuracyNote(stats: ReturnType<typeof getStats>) {
-  if (stats.accuracy >= 98) {
-    return "Accuracy stayed clean; you can safely nudge the pace next time.";
-  }
-
-  if (stats.accuracy >= 94) {
-    return "Accuracy is close; most gains will come from catching slips earlier.";
-  }
-
-  return "Accuracy is the main lever; slow down until the error line settles.";
-}
-
-function getPaceNote(
-  stats: ReturnType<typeof getStats>,
-  previousRun: PracticeResult
-) {
-  const deltaWpm = stats.wpm - previousRun.wpm;
-
-  if (Math.abs(deltaWpm) < 1) {
-    return "Your pace is steady against the last comparable session.";
-  }
-
-  return deltaWpm > 0
-    ? "Your pace moved up; protect that gain with a clean first line."
-    : "Your pace dipped; start the next run a touch slower and build rhythm.";
-}
-
-function getHotspotNote(hotspots: MistakeHotspot[]) {
-  const hotspot = hotspots[0];
-
-  if (!hotspot) {
-    return "No missed keys in this run.";
-  }
-
-  return `Watch ${formatHotspotCharacter(hotspot.expected)} when your fingers want ${formatHotspotCharacter(
-    hotspot.actual
-  )}.`;
+  return mode === "essay" ? "New best time" : "New best WPM";
 }
 
 type ResetSessionOptions = {
@@ -1104,15 +1004,14 @@ export function App() {
       ),
     [activePracticeKey, activeResultId, sessionHistory]
   );
-  const resultContext = useMemo(
+  const resultBadge = useMemo(
     () =>
-      buildResultContext({
-        hotspots: mistakeHotspots,
+      getResultBadge({
         mode,
         previousResults: previousComparableResults,
         stats
       }),
-    [mistakeHotspots, mode, previousComparableResults, stats]
+    [mode, previousComparableResults, stats]
   );
   const finishedEssayCount = essayContents.filter(
     (content) => personalBests.essays[content.id]
@@ -1984,7 +1883,7 @@ export function App() {
                 <small>accuracy</small>
               </div>
               <div className="metric-pill">
-                <span>{stats.typos} chars</span>
+                <span>{formatCount(stats.typos, "char", "chars")}</span>
                 <small>typos</small>
               </div>
             </div>
@@ -2001,9 +1900,7 @@ export function App() {
               hotspots={mistakeHotspots}
               title={activePracticeTitle}
               durationLabel={formatDurationLabel(stats.elapsedMs)}
-              resultBadge={resultContext.badge}
-              resultComparison={resultContext.comparison}
-              coachingNotes={resultContext.notes}
+              resultBadge={resultBadge}
               onChooseAnother={navigateHome}
               onRetry={() => resetSession()}
             />

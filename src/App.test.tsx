@@ -153,7 +153,12 @@ describe("App home", () => {
       screen.getByRole("region", { name: "Challenge results" })
     ).toBeInTheDocument();
     expect(screen.getByText("Custom complete")).toBeInTheDocument();
-    expect(screen.getByText("Coach notes")).toBeInTheDocument();
+    expect(
+      screen.getByText(`${customText.length} chars typed`)
+    ).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Next focus" })).toHaveTextContent(
+      "No missed keys this run."
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Choose another practice" }));
 
@@ -195,14 +200,14 @@ describe("App home", () => {
 
     typeIntoCapture(customText.slice(4));
 
-    expect(screen.getByLabelText("Typing summary")).toHaveTextContent(
-      "94%accuracy"
-    );
-    expect(screen.getByLabelText("Typing summary")).toHaveTextContent(
-      "0 charstypos"
-    );
-    expect(screen.getByRole("region", { name: "Mistake hotspots" })).toHaveTextContent(
-      "1"
+    expect(screen.getByLabelText("accuracy: 94%")).toBeInTheDocument();
+    expect(
+      screen.getByText(`${customText.length + 4} chars typed`)
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("mistyped: 4 keys")).toBeInTheDocument();
+    expect(screen.getByLabelText("typos: 0 chars")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Next focus" })).toHaveTextContent(
+      "Focus next:"
     );
   });
 

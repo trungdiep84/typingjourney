@@ -1,4 +1,4 @@
-import { ArrowLeft, RotateCcw, Sparkles, Target, Trophy } from "lucide-react";
+import { ArrowLeft, RotateCcw, Target } from "lucide-react";
 import type {
   ChallengeMode,
   MistakeHotspot,
@@ -12,8 +12,6 @@ type ResultsPanelProps = {
   title: string;
   durationLabel: string;
   resultBadge: string;
-  resultComparison: string;
-  coachingNotes: string[];
   onChooseAnother: () => void;
   onRetry: () => void;
 };
@@ -34,6 +32,25 @@ function formatCharacter(char: string) {
   return char;
 }
 
+function formatCount(count: number, singular: string, plural: string) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function ResultStat({
+  label,
+  value
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="result-stat" role="group" aria-label={`${label}: ${value}`}>
+      <span>{value}</span>
+      <small>{label}</small>
+    </div>
+  );
+}
+
 export function ResultsPanel({
   mode,
   stats,
@@ -41,92 +58,57 @@ export function ResultsPanel({
   title,
   durationLabel,
   resultBadge,
-  resultComparison,
-  coachingNotes,
   onChooseAnother,
   onRetry
 }: ResultsPanelProps) {
+  const mistypedKeys = Math.max(0, stats.inputChars - stats.correctInputChars);
+  const totalTypedLabel = `${formatCount(stats.inputChars, "char", "chars")} typed`;
+  const topHotspot = hotspots[0];
+  const focusText = topHotspot
+    ? `Focus next: ${formatCharacter(topHotspot.expected)} -> ${formatCharacter(
+        topHotspot.actual
+      )}, ${formatCount(topHotspot.count, "time", "times")}`
+    : "No missed keys this run.";
+
   return (
     <section className="results-screen" aria-label="Challenge results">
       <div className="results-hero">
-        <div className="results-icon">
-          <Trophy size={28} />
+        <div>
+          <p className="results-kicker">
+            {mode === "timed"
+              ? "Time complete"
+              : mode === "custom"
+                ? "Custom complete"
+                : "Essay complete"}
+          </p>
+          <h2>{Math.round(stats.wpm)} WPM</h2>
+          <p className="results-typed">{totalTypedLabel}</p>
+          <p>{title}</p>
         </div>
-        <p className="results-kicker">
-          {mode === "timed"
-            ? "Time complete"
-            : mode === "custom"
-              ? "Custom complete"
-              : "Essay complete"}
-        </p>
-        <h2>{Math.round(stats.wpm)} WPM</h2>
-        <p>{title}</p>
         <span className="result-badge">{resultBadge}</span>
       </div>
 
-      <div className="results-grid" aria-label="Typing summary">
-        <div className="result-stat">
-          <span>{Math.round(stats.accuracy)}%</span>
-          <small>accuracy</small>
-        </div>
-        <div className="result-stat">
-          <span>{durationLabel}</span>
-          <small>{mode === "timed" ? "duration" : "time"}</small>
-        </div>
-        <div className="result-stat">
-          <span>{stats.typedChars}</span>
-          <small>characters</small>
-        </div>
-        <div className="result-stat">
-          <span>{stats.typos} chars</span>
-          <small>typos</small>
-        </div>
+      <div className="results-grid" role="group" aria-label="Typing summary">
+        <ResultStat label="accuracy" value={`${Math.round(stats.accuracy)}%`} />
+        <ResultStat
+          label="mistyped"
+          value={formatCount(mistypedKeys, "key", "keys")}
+        />
+        <ResultStat
+          label="typos"
+          value={formatCount(stats.typos, "char", "chars")}
+        />
+        <ResultStat
+          label={mode === "timed" ? "duration" : "time"}
+          value={durationLabel}
+        />
       </div>
 
-      <section className="coach-panel" aria-label="Result coaching">
-        <div className="hotspots-heading">
-          <Sparkles size={19} />
-          <div>
-            <p className="results-kicker">Coach notes</p>
-            <h3>{resultComparison}</h3>
-          </div>
-        </div>
-
-        <div className="coach-list">
-          {coachingNotes.map((note) => (
-            <p key={note}>{note}</p>
-          ))}
-        </div>
-      </section>
-
-      <section className="hotspots-panel" aria-label="Mistake hotspots">
-        <div className="hotspots-heading">
+      <section className="result-focus" aria-label="Next focus">
+        <span>
           <Target size={19} />
-          <div>
-            <p className="results-kicker">Mistake hotspots</p>
-            <h3>What to watch next time</h3>
-          </div>
-        </div>
-
-        {hotspots.length > 0 ? (
-          <div className="hotspots-list">
-            {hotspots.map((hotspot) => (
-              <div
-                className="hotspot-row"
-                key={`${hotspot.expected}-${hotspot.actual}`}
-              >
-                <span>
-                  <kbd>{formatCharacter(hotspot.expected)}</kbd>
-                  <small>typed</small>
-                  <kbd>{formatCharacter(hotspot.actual)}</kbd>
-                </span>
-                <strong>{hotspot.count}</strong>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="hotspot-empty">No missed keys in this run.</p>
-        )}
+          <strong>{focusText}</strong>
+        </span>
       </section>
 
       <div className="results-actions">

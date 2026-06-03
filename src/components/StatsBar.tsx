@@ -27,6 +27,10 @@ function StatItem({
   );
 }
 
+function formatCount(count: number, singular: string, plural: string) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 export function StatsBar({ stats, timeLabel }: StatsBarProps) {
   return (
     <section className="stats-bar" aria-label="Typing stats">
@@ -44,7 +48,7 @@ export function StatsBar({ stats, timeLabel }: StatsBarProps) {
       <StatItem
         icon={<AlertCircle size={22} />}
         label="Typos"
-        value={`${stats.typos} chars`}
+        value={formatCount(stats.typos, "char", "chars")}
       />
     </section>
   );
