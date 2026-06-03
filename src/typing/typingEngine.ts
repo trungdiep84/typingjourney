@@ -29,6 +29,8 @@ export function createTypingSession({
     durationMs,
     entries: [],
     mistakes: [],
+    inputChars: 0,
+    correctInputChars: 0,
     startedAt: null,
     pausedAt: null,
     finishedAt: null
@@ -59,17 +61,18 @@ export function typeCharacter(
     return session;
   }
 
+  const correct = char === expected;
   const startedAt = session.startedAt ?? nowMs;
   const entries = [
     ...session.entries,
     {
       expected,
       actual: char,
-      correct: char === expected
+      correct
     }
   ];
   const mistakes =
-    char === expected
+    correct
       ? session.mistakes
       : [
           ...session.mistakes,
@@ -92,6 +95,8 @@ export function typeCharacter(
     startedAt,
     entries,
     mistakes,
+    inputChars: session.inputChars + 1,
+    correctInputChars: session.correctInputChars + (correct ? 1 : 0),
     finishedAt
   };
 }
@@ -205,17 +210,29 @@ export function isCompleted(session: TypingSession, nowMs: number): boolean {
 export function getStats(session: TypingSession, nowMs: number): TypingStats {
   const elapsedMs = getElapsedMs(session, nowMs);
   const typedChars = session.entries.length;
-  const correctChars = session.entries.filter((entry) => entry.correct).length;
-  const errors = typedChars - correctChars;
+  const finalCorrectChars = session.entries.filter(
+    (entry) => entry.correct
+  ).length;
+  const typos = typedChars - finalCorrectChars;
+  const inputChars = Math.max(session.inputChars, typedChars);
+  const correctInputChars = Math.min(
+    inputChars,
+    Math.max(session.correctInputChars, finalCorrectChars)
+  );
   const elapsedMinutes = elapsedMs / ONE_MINUTE_MS;
   const wpm = elapsedMinutes > 0 ? typedChars / 5 / elapsedMinutes : 0;
-  const accuracy = typedChars > 0 ? (correctChars / typedChars) * 100 : 100;
+  const accuracy =
+    inputChars > 0
+      ? (correctInputChars / inputChars) * 100
+      : 100;
 
   return {
     wpm,
     accuracy,
-    errors,
+    typos,
     typedChars,
+    inputChars,
+    correctInputChars,
     elapsedMs,
     completed: isCompleted(session, nowMs)
   };

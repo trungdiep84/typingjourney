@@ -50,7 +50,7 @@ describe("typing engine", () => {
     expect(stats.typedChars).toBe(2);
     expect(stats.wpm).toBe(0.4);
     expect(stats.accuracy).toBe(50);
-    expect(stats.errors).toBe(1);
+    expect(stats.typos).toBe(1);
   });
 
   it("advances through consecutive incorrect characters", () => {
@@ -63,8 +63,10 @@ describe("typing engine", () => {
     const stats = getStats(session, 1_000);
 
     expect(session.entries).toHaveLength(2);
-    expect(stats.errors).toBe(2);
-    expect(characters.find((character) => character.status === "current")?.char).toBe("c");
+    expect(stats.typos).toBe(2);
+    expect(
+      characters.find((character) => character.status === "current")?.char
+    ).toBe("c");
   });
 
   it("removes backspaced characters from WPM count", () => {
@@ -90,9 +92,48 @@ describe("typing engine", () => {
     const stats = getStats(session, 500);
 
     expect(stats.typedChars).toBe(1);
-    expect(stats.accuracy).toBe(100);
-    expect(stats.errors).toBe(0);
+    expect(stats.inputChars).toBe(2);
+    expect(stats.correctInputChars).toBe(1);
+    expect(stats.accuracy).toBe(50);
+    expect(stats.typos).toBe(0);
     expect(stats.completed).toBe(true);
+  });
+
+  it("keeps deleted correct inputs in process accuracy", () => {
+    let session = createTypingSession({ mode: "essay", text: "ab" });
+
+    session = typeCharacter(session, "a", 0);
+    session = backspace(session);
+    session = typeCharacter(session, "x", 100);
+    session = backspace(session);
+    session = typeCharacter(session, "a", 200);
+    session = typeCharacter(session, "b", 300);
+
+    const stats = getStats(session, 300);
+
+    expect(stats.inputChars).toBe(4);
+    expect(stats.correctInputChars).toBe(3);
+    expect(stats.accuracy).toBe(75);
+    expect(stats.typos).toBe(0);
+  });
+
+  it("normalizes impossible restored input counters", () => {
+    let session = createTypingSession({ mode: "essay", text: "ab" });
+
+    session = typeCharacter(session, "a", 0);
+
+    const stats = getStats(
+      {
+        ...session,
+        inputChars: 0,
+        correctInputChars: 0
+      },
+      0
+    );
+
+    expect(stats.inputChars).toBe(1);
+    expect(stats.correctInputChars).toBe(1);
+    expect(stats.accuracy).toBe(100);
   });
 
   it("keeps mistake hotspots after repaired characters", () => {

@@ -54,8 +54,9 @@ describe("App home", () => {
     );
   });
 
-  it("restores paused essay progress when the essay is opened again", () => {
+  it("restores paused essay progress with process accuracy counters", () => {
     const essay = essayContents[0];
+    const wrongChar = essay.text[0] === "x" ? "z" : "x";
 
     render(<App />);
 
@@ -67,9 +68,11 @@ describe("App home", () => {
       )
     );
 
-    fireEvent.keyDown(screen.getByLabelText("Typing capture input"), {
-      key: essay.text[0]
-    });
+    const captureInput = screen.getByLabelText("Typing capture input");
+
+    fireEvent.keyDown(captureInput, { key: wrongChar });
+    fireEvent.keyDown(captureInput, { key: "Backspace" });
+    fireEvent.keyDown(captureInput, { key: essay.text[0] });
     fireEvent.click(screen.getByRole("button", { name: "Pause" }));
 
     const storedProgress = JSON.parse(
@@ -77,6 +80,8 @@ describe("App home", () => {
     );
 
     expect(storedProgress[essay.id].entries).toHaveLength(1);
+    expect(storedProgress[essay.id].inputChars).toBe(2);
+    expect(storedProgress[essay.id].correctInputChars).toBe(1);
     expect(screen.getByRole("status")).toHaveTextContent("Paused");
 
     cleanup();
@@ -93,6 +98,7 @@ describe("App home", () => {
     );
 
     expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
   });
 
   it("filters the essay journey to saved essays", () => {
@@ -167,7 +173,7 @@ describe("App home", () => {
     );
   });
 
-  it("counts every miss in results even when only top hotspots are shown", () => {
+  it("reports repaired misses through accuracy while final typos stay clean", () => {
     const customText =
       "abcdefghijklmnopqrstuvwxyz typing journey custom misses test.";
 
@@ -189,7 +195,12 @@ describe("App home", () => {
 
     typeIntoCapture(customText.slice(4));
 
-    expect(screen.getByLabelText("Typing summary")).toHaveTextContent("4misses");
+    expect(screen.getByLabelText("Typing summary")).toHaveTextContent(
+      "94%accuracy"
+    );
+    expect(screen.getByLabelText("Typing summary")).toHaveTextContent(
+      "0 charstypos"
+    );
     expect(screen.getByRole("region", { name: "Mistake hotspots" })).toHaveTextContent(
       "1"
     );
@@ -229,6 +240,7 @@ describe("App home", () => {
 
   it("opens stored essay progress on the typing route instead of the timed default", () => {
     const essay = essayContents[0];
+    const wrongChar = essay.text[0] === "x" ? "z" : "x";
 
     window.history.replaceState({}, "", "/typing");
     window.localStorage.setItem(
@@ -247,7 +259,13 @@ describe("App home", () => {
               correct: true
             }
           ],
-          mistakes: [],
+          mistakes: [
+            {
+              expected: essay.text[0],
+              actual: wrongChar,
+              correct: false
+            }
+          ],
           elapsedMs: 2_000,
           updatedAt: 2_000
         }
@@ -258,6 +276,7 @@ describe("App home", () => {
 
     expect(screen.getByRole("heading", { name: essay.title })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "1 minute test" })).not.toBeInTheDocument();
   });
 

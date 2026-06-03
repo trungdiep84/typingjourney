@@ -123,7 +123,7 @@ type PracticeResult = {
   elapsedMs: number;
   wpm: number;
   accuracy: number;
-  errors: number;
+  typos: number;
   typedChars: number;
   essayId?: string;
   sourceEssayId?: string;
@@ -152,6 +152,8 @@ type StoredEssayProgress = {
   essayId: string;
   entries: TypedCharacter[];
   mistakes: TypedCharacter[];
+  inputChars: number;
+  correctInputChars: number;
   elapsedMs: number;
   updatedAt: number;
 };
@@ -353,12 +355,12 @@ function parseStoredPracticeResult(value: unknown): PracticeResult | null {
     return null;
   }
 
-  const result = value as Partial<PracticeResult>;
+  const result = value as Partial<PracticeResult> & { errors?: unknown };
   const durationMs = getNonNegativeNumber(result.durationMs);
   const elapsedMs = getNonNegativeNumber(result.elapsedMs);
   const wpm = getNonNegativeNumber(result.wpm);
   const accuracy = clampPercentage(result.accuracy);
-  const errors = getNonNegativeInteger(result.errors);
+  const typos = getNonNegativeInteger(result.typos ?? result.errors);
   const typedChars = getNonNegativeInteger(result.typedChars);
   const completedAt = getNonNegativeNumber(result.completedAt);
 
@@ -374,7 +376,7 @@ function parseStoredPracticeResult(value: unknown): PracticeResult | null {
     elapsedMs === null ||
     wpm === null ||
     accuracy === null ||
-    errors === null ||
+    typos === null ||
     typedChars === null ||
     completedAt === null
   ) {
@@ -394,7 +396,7 @@ function parseStoredPracticeResult(value: unknown): PracticeResult | null {
     elapsedMs,
     wpm,
     accuracy,
-    errors,
+    typos,
     typedChars,
     essayId:
       typeof result.essayId === "string" && isKnownEssayId(result.essayId)
@@ -507,7 +509,7 @@ function createPracticeResult({
     elapsedMs: stats.elapsedMs,
     wpm: stats.wpm,
     accuracy: stats.accuracy,
-    errors: stats.errors,
+    typos: stats.typos,
     typedChars: stats.typedChars,
     essayId: mode === "essay" ? content.id : undefined,
     sourceEssayId: content.sourceEssayId
@@ -567,13 +569,43 @@ function getStoredEssayProgresses(): StoredEssayProgresses {
           return [];
         }
 
+        const entries = candidate.entries.filter(isStoredTypedCharacter);
+        const mistakes = candidate.mistakes.filter(isStoredTypedCharacter);
+        const storedInputChars = getNonNegativeInteger(candidate.inputChars);
+        const storedCorrectInputChars = getNonNegativeInteger(
+          candidate.correctInputChars
+        );
+        const finalCorrectChars = entries.filter(
+          (entry) => entry.correct
+        ).length;
+        const finalTypos = entries.filter((entry) => !entry.correct).length;
+        const legacyInputChars =
+          entries.length + Math.max(0, mistakes.length - finalTypos);
+        const inputChars = Math.max(
+          entries.length,
+          storedInputChars ?? legacyInputChars
+        );
+        const fallbackCorrectInputChars =
+          storedInputChars === null
+            ? finalCorrectChars
+            : Math.max(finalCorrectChars, inputChars - mistakes.length);
+        const correctInputChars = Math.min(
+          inputChars,
+          Math.max(
+            finalCorrectChars,
+            storedCorrectInputChars ?? fallbackCorrectInputChars
+          )
+        );
+
         return [
           [
             essayId,
             {
               essayId,
-              entries: candidate.entries.filter(isStoredTypedCharacter),
-              mistakes: candidate.mistakes.filter(isStoredTypedCharacter),
+              entries,
+              mistakes,
+              inputChars,
+              correctInputChars,
               elapsedMs: Math.max(0, candidate.elapsedMs),
               updatedAt: candidate.updatedAt
             }
@@ -643,6 +675,8 @@ function createStoredEssayProgress(
     essayId,
     entries: session.entries,
     mistakes: session.mistakes,
+    inputChars: session.inputChars,
+    correctInputChars: session.correctInputChars,
     elapsedMs: getStats(session, nowMs).elapsedMs,
     updatedAt: nowMs
   };
@@ -661,6 +695,8 @@ function createPausedEssaySessionFromProgress(
     }),
     entries: progress.entries,
     mistakes: progress.mistakes,
+    inputChars: progress.inputChars,
+    correctInputChars: progress.correctInputChars,
     startedAt: nowMs - progress.elapsedMs,
     pausedAt: nowMs
   };
@@ -900,7 +936,7 @@ function getHotspotNote(hotspots: MistakeHotspot[]) {
   const hotspot = hotspots[0];
 
   if (!hotspot) {
-    return "No active mistakes in the final text.";
+    return "No missed keys in this run.";
   }
 
   return `Watch ${formatHotspotCharacter(hotspot.expected)} when your fingers want ${formatHotspotCharacter(
@@ -1539,7 +1575,7 @@ export function App() {
     stats.accuracy,
     stats.completed,
     stats.elapsedMs,
-    stats.errors,
+    stats.typos,
     stats.typedChars,
     stats.wpm,
     session.durationMs,
@@ -1947,6 +1983,10 @@ export function App() {
                 <span>{Math.round(stats.accuracy)}%</span>
                 <small>accuracy</small>
               </div>
+              <div className="metric-pill">
+                <span>{stats.typos} chars</span>
+                <small>typos</small>
+              </div>
             </div>
           </div>
 
@@ -1959,7 +1999,6 @@ export function App() {
               mode={mode}
               stats={stats}
               hotspots={mistakeHotspots}
-              totalMisses={session.mistakes.length}
               title={activePracticeTitle}
               durationLabel={formatDurationLabel(stats.elapsedMs)}
               resultBadge={resultContext.badge}

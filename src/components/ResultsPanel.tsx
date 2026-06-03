@@ -9,7 +9,6 @@ type ResultsPanelProps = {
   mode: ChallengeMode;
   stats: TypingStats;
   hotspots: MistakeHotspot[];
-  totalMisses: number;
   title: string;
   durationLabel: string;
   resultBadge: string;
@@ -39,7 +38,6 @@ export function ResultsPanel({
   mode,
   stats,
   hotspots,
-  totalMisses,
   title,
   durationLabel,
   resultBadge,
@@ -80,8 +78,8 @@ export function ResultsPanel({
           <small>characters</small>
         </div>
         <div className="result-stat">
-          <span>{totalMisses}</span>
-          <small>misses</small>
+          <span>{stats.typos} chars</span>
+          <small>typos</small>
         </div>
       </div>
 
@@ -127,7 +125,7 @@ export function ResultsPanel({
             ))}
           </div>
         ) : (
-          <p className="hotspot-empty">No misses in this run.</p>
+          <p className="hotspot-empty">No missed keys in this run.</p>
         )}
       </section>
 

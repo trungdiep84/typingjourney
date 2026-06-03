@@ -30,14 +30,22 @@ function StatItem({
 export function StatsBar({ stats, timeLabel }: StatsBarProps) {
   return (
     <section className="stats-bar" aria-label="Typing stats">
-      <StatItem icon={<Gauge size={22} />} label="WPM" value={Math.round(stats.wpm).toString()} />
+      <StatItem
+        icon={<Gauge size={22} />}
+        label="WPM"
+        value={Math.round(stats.wpm).toString()}
+      />
       <StatItem
         icon={<Target size={22} />}
         label="Accuracy"
         value={`${Math.round(stats.accuracy)}%`}
       />
       <StatItem icon={<Timer size={22} />} label="Time" value={timeLabel} />
-      <StatItem icon={<AlertCircle size={22} />} label="Errors" value={stats.errors.toString()} />
+      <StatItem
+        icon={<AlertCircle size={22} />}
+        label="Typos"
+        value={`${stats.typos} chars`}
+      />
     </section>
   );
 }

@@ -13,8 +13,10 @@ export type TypingContent = {
 export type TypingStats = {
   wpm: number;
   accuracy: number;
-  errors: number;
+  typos: number;
   typedChars: number;
+  inputChars: number;
+  correctInputChars: number;
   elapsedMs: number;
   completed: boolean;
 };
@@ -37,6 +39,8 @@ export type TypingSession = {
   durationMs: number;
   entries: TypedCharacter[];
   mistakes: TypedCharacter[];
+  inputChars: number;
+  correctInputChars: number;
   startedAt: number | null;
   pausedAt: number | null;
   finishedAt: number | null;
